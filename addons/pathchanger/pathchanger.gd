@@ -4,6 +4,7 @@ extends EditorPlugin
 var build_tree_rep = preload("build_tree_representation.gd").new()
 var diffr = preload("diffr.gd").new()
 var prompter = preload("prompter.gd").new()
+var script_ref = preload("script_ref.gd").new()
 
 var current_scene_root: Node
 var _previous_tree: Dictionary
@@ -56,7 +57,25 @@ func _on_scene_modified():
 	var change_type = change[0]
 	var referenced_object = change[1]
 	print("Change: ", change_type, " -> ", referenced_object)
+	if change_type == diffr.ChangeType.Deleted:
+		var references := script_ref.find_script_ref_wo_dynamics(
+			current_scene_root,
+			script_ref.get_scripts(current_scene_root),
+			referenced_object
+		)
 
+		for reference in references:
+			if reference.stripped == "":
+				continue
+			if reference.stripped == referenced_object:
+				print("found reference: ", reference)
+				if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object.", "Go to Reference", "Cancel"):
+					var path_parts: String = reference.path.split(":")
+					var script_path := path_parts[0]
+					var line := int(path_parts[1])
+					EditorInterface.edit_script(load(script_path), int(line))
+				return
+		return
 func _exit_tree() -> void:
 	# Clean-up of the plugin goes here.
 	var ur = get_undo_redo()
