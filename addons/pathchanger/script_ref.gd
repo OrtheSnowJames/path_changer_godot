@@ -1,14 +1,18 @@
+extends RefCounted
+
 func get_scripts(root_node: Node) -> Array[Script]:
 	var scripts: Array[Script] = []
-	for child in root_node.get_children():
-		var script := child.get_script()
-
-		if script and not scripts.has(script):
-			scripts.append(script)
-
-		scripts.append_array(get_scripts(child))
-
+	_collect_scripts(root_node, scripts)
 	return scripts
+
+## visits each node once (including root_node) and only appends unique scripts
+func _collect_scripts(node: Node, scripts: Array[Script]) -> void:
+	var script := node.get_script()
+	if script and not scripts.has(script):
+		scripts.append(script)
+
+	for child in node.get_children():
+		_collect_scripts(child, scripts)
 
 # find_script_ref without dynamic references
 func find_script_ref_wo_dynamics(root_node: Node, scripts: Array[Script], look_for: Node) -> Array[Dictionary]:

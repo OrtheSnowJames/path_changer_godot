@@ -58,10 +58,13 @@ func _on_scene_modified():
 	var referenced_object = change[1]
 	print("Change: ", change_type, " -> ", referenced_object)
 	if change_type == diffr.ChangeType.Deleted:
+		var referenced_node := current_scene_root.get_node_or_null(NodePath(referenced_object))
+		var scripts := script_ref.get_scripts(current_scene_root)
+		print("scripts: ", scripts)
 		var references := script_ref.find_script_ref_wo_dynamics(
 			current_scene_root,
-			script_ref.get_scripts(current_scene_root),
-			referenced_object
+			scripts,
+			referenced_node
 		)
 
 		for reference in references:
