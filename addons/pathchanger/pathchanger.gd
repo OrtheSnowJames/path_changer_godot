@@ -70,9 +70,13 @@ func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
 		print("found reference: ", reference)
 		if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object.", "Go to Reference", "Cancel"):
 			var ref_path: String = reference.path
+			print("ref_path: ", ref_path)
+			# the ref_path starts with res://, malforming the path parts split
+			ref_path = ref_path.replace("res://", "")
 			var path_parts := ref_path.split(":")
 			var script_path := path_parts[0]
 			var line := int(path_parts[1])
+			print("script_path: ", script_path, " line: ", line)
 			EditorInterface.edit_script(load(script_path), line)
 
 func _exit_tree() -> void:
