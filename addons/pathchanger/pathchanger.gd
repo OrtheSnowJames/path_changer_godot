@@ -77,6 +77,7 @@ func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
 			return # this is intentional so that it doesn't spam pop-ups
 
 ## handles moved/renamed nodes
+## TODO: make sure the conflict check checks across all scenes
 func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
 	var references := script_ref.find_script_ref_wo_dynamics(
 		current_scene_root,
@@ -122,8 +123,7 @@ func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
 		if new_text == "":
 			continue
 
-		_replace_reference_line(script, parsed.script_path, parsed.line, reference.text, new_text)
-		EditorInterface.edit_script(script, parsed.line)
+		_replace_reference_line(script, parsed.line, reference.text, new_text)
 
 ## splits a script:line ref path into its parts, strips res:// first since it breaks the split
 func _parse_reference_path(ref_path: String) -> Dictionary:
@@ -154,16 +154,27 @@ func _build_replacement_text(old_text: String, new_relative_path: String) -> Str
 		return "get_node(\"%s\")" % new_relative_path
 	return ""
 
-## swaps the old reference text for the new one on a given line and saves the script
-func _replace_reference_line(script: Script, script_path: String, line: int, old_text: String, new_text: String) -> void:
-	var lines := script.source_code.split("\n")
-	var line_index := line - 1
-	if line_index < 0 or line_index >= lines.size():
+## swaps the old reference text for the new one right in the open script editor tab
+## this leaves it as an unsaved change instead of writing straight to disk
+func _replace_reference_line(script: Script, line: int, old_text: String, new_text: String) -> void:
+	EditorInterface.edit_script(script, line)
+
+	var code_edit := _get_open_code_edit()
+	if code_edit == null:
 		return
 
-	lines[line_index] = lines[line_index].replace(old_text, new_text)
-	script.source_code = "\n".join(lines)
-	ResourceSaver.save(script, script_path)
+	var line_index := line - 1
+	if line_index < 0 or line_index >= code_edit.get_line_count():
+		return
+
+	code_edit.set_line(line_index, code_edit.get_line(line_index).replace(old_text, new_text))
+
+## gets the CodeEdit control behind the script editor tab thats currently focused
+func _get_open_code_edit() -> CodeEdit:
+	var current_editor := EditorInterface.get_script_editor().get_current_editor()
+	if current_editor == null:
+		return null
+	return current_editor.get_base_editor() as CodeEdit
 
 func _exit_tree() -> void:
 	# Clean-up of the plugin goes here.
