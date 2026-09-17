@@ -15,8 +15,8 @@ func _collect_scripts(node: Node, scripts: Array[Script]) -> void:
 		_collect_scripts(child, scripts)
 
 # find_script_ref without dynamic references
-func find_script_ref_wo_dynamics(root_node: Node, scripts: Array[Script], look_for: Node) -> Array[Dictionary]:
-	var script_refs := find_script_ref(root_node, scripts, look_for)
+func find_script_ref_wo_dynamics(root_node: Node, scripts: Array[Script], target_path: String) -> Array[Dictionary]:
+	var script_refs := find_script_ref(root_node, scripts, target_path)
 	var result: Array[Dictionary] = []
 
 	for ref in script_refs:
@@ -25,14 +25,8 @@ func find_script_ref_wo_dynamics(root_node: Node, scripts: Array[Script], look_f
 
 	return result
 
-## finds every place in the scene's scripts that references `look_for`
-## `stripped` holds the resolved node's absolute path within the scene, e.g.
-## "/Node2D/Enemy/Weapon". It is "" for dynamic references we can't resolve.
-##
-## Returns an Array of Dictionaries, ex:
-## {path: "res://file.gd:50", text: "get_node(\"../object\")", dynamic: false,
-##  stripped: "/Node2D/Enemy/Weapon"}
-func find_script_ref(root_node: Node, scripts: Array[Script], look_for: Node) -> Array[Dictionary]:
+## finds every reference in the scene scripts that points at target_path
+func find_script_ref(root_node: Node, scripts: Array[Script], target_path: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 
 	# map each script to the node(s) in the scene that use it
@@ -50,8 +44,7 @@ func find_script_ref(root_node: Node, scripts: Array[Script], look_for: Node) ->
 		var candidates := _collect_candidates(script.source_code)
 
 		for candidate in candidates:
-			# Dynamic references can't be resolved statically, so we can't prove
-			# they point at look_for. Report them anyway so the caller can inspect.
+			# dynamic refs cant be resolved statically so just report them
 			if candidate.dynamic:
 				result.append({
 					"path": "%s:%d" % [script.resource_path, candidate.line],
@@ -61,13 +54,17 @@ func find_script_ref(root_node: Node, scripts: Array[Script], look_for: Node) ->
 				})
 				continue
 
-			if _any_owner_resolves(owners, candidate, look_for):
-				result.append({
-					"path": "%s:%d" % [script.resource_path, candidate.line],
-					"text": candidate.text,
-					"dynamic": false,
-					"stripped": _absolute_scene_path(root_node, look_for),
-				})
+			# a script can be on many nodes so check every owner
+			for owner in owners:
+				var stripped := _candidate_target_path(root_node, owner, candidate)
+				if stripped != "" and stripped == target_path:
+					result.append({
+						"path": "%s:%d" % [script.resource_path, candidate.line],
+						"text": candidate.text,
+						"dynamic": false,
+						"stripped": stripped,
+					})
+					break
 
 	return result
 
@@ -112,7 +109,7 @@ func _collect_candidates(source: String) -> Array[Dictionary]:
 				match matcher.mode:
 					"arg":
 						var arg: String = m.get_string("arg")
-						# Empty call like get_node() -> nothing to reference.
+						# empty call like get_node() has nothing to reference
 						if arg.strip_edges() == "":
 							continue
 						var parsed := _parse_arg_path(arg)
@@ -169,26 +166,43 @@ func _collect_nodes_by_script(node: Node, map: Dictionary) -> void:
 	for child in node.get_children():
 		_collect_nodes_by_script(child, map)
 
-## find if any owner has a node that matches candidate
-## Returns true if any owner node resolves the candidate reference to look_for.
-func _any_owner_resolves(owners: Array, candidate: Dictionary, look_for: Node) -> bool:
-	for owner in owners:
-		if owner == null or not is_instance_valid(owner):
-			continue
+## works out the absolute scene path a reference points at using path math so it still works after the target is deleted
+func _candidate_target_path(root_node: Node, owner: Node, candidate: Dictionary) -> String:
+	if owner == null or not is_instance_valid(owner):
+		return ""
 
-		if candidate.index >= 0:
-			if candidate.index < owner.get_child_count() and owner.get_child(candidate.index) == look_for:
-				return true
-		elif candidate.path != "" and owner.get_node_or_null(candidate.path) == look_for:
-			return true
+	# get_child(index) needs a live child to know its name
+	if candidate.index >= 0:
+		if candidate.index < owner.get_child_count():
+			return _absolute_scene_path(root_node, owner.get_child(candidate.index))
+		return ""
 
-	return false
+	if candidate.path == "":
+		return ""
 
-## Builds a node's absolute path within the scene, rooted at root_node, e.g.
-## "/Node2D/Enemy/Weapon".
+	# absolute node paths are used as is
+	if candidate.path.begins_with("/"):
+		return _normalize_scene_path(candidate.path)
+
+	return _normalize_scene_path(_absolute_scene_path(root_node, owner) + "/" + candidate.path)
+
+## absolute path of a node within the scene like /Node2D/Enemy/Weapon
 func _absolute_scene_path(root_node: Node, node: Node) -> String:
 	if node == null:
 		return ""
 	if node == root_node:
 		return "/" + str(root_node.name)
 	return "/" + str(root_node.name) + "/" + str(root_node.get_path_to(node))
+
+## collapses . and .. segments in an absolute scene path
+func _normalize_scene_path(path: String) -> String:
+	var stack: Array[String] = []
+	for part in path.split("/"):
+		if part == "" or part == ".":
+			continue
+		elif part == "..":
+			if not stack.is_empty():
+				stack.remove_at(stack.size() - 1)
+		else:
+			stack.append(part)
+	return "/" + "/".join(stack)

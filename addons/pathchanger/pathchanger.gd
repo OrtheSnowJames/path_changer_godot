@@ -7,7 +7,7 @@ var prompter = preload("prompter.gd").new()
 var script_ref = preload("script_ref.gd").new()
 
 var current_scene_root: Node
-var _previous_tree: Dictionary
+var _previous_rep: Dictionary
 
 func _enable_plugin() -> void:
 	# Add autoloads here.
@@ -38,47 +38,43 @@ func _on_change_scene(scene_root: Node) -> void:
 	#if scene_root and scene_root.tree_changed.is_connected(_on_tree_changed):
 	#	current_scene_root.tree_changed.disconnect(_on_tree_changed)
 	current_scene_root = scene_root
-	# print(build_tree_rep)
-	# print(typeof(build_tree_rep))
-	var new_tree = build_tree_rep.recurse_build(scene_root)
-	_previous_tree = new_tree
+	_previous_rep = build_tree_rep.build(scene_root)
 
 	#current_scene_root.tree_changed.connect(_on_tree_changed)
 
 func _on_scene_modified():
 	if current_scene_root == null:
 		return
-	print("tree changed!")
-	var new_tree = build_tree_rep.recurse_build(current_scene_root)
-	var change = diffr.diff_scn_one(_previous_tree, new_tree)
-	_previous_tree = new_tree
-	if change == []:
-		return
-	var change_type = change[0]
-	var referenced_object = change[1]
-	print("Change: ", change_type, " -> ", referenced_object)
-	if change_type == diffr.ChangeType.Deleted:
-		var referenced_node := current_scene_root.get_node_or_null(NodePath(referenced_object))
-		var scripts := script_ref.get_scripts(current_scene_root)
-		print("scripts: ", scripts)
-		var references := script_ref.find_script_ref_wo_dynamics(
-			current_scene_root,
-			scripts,
-			referenced_node
-		)
 
-		for reference in references:
-			if reference.stripped == "":
-				continue
-			if reference.stripped == referenced_object:
-				print("found reference: ", reference)
-				if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object.", "Go to Reference", "Cancel"):
-					var path_parts: String = reference.path.split(":")
-					var script_path := path_parts[0]
-					var line := int(path_parts[1])
-					EditorInterface.edit_script(load(script_path), int(line))
-				return
+	var new_rep := build_tree_rep.build(current_scene_root)
+	var changes := diffr.diff(_previous_rep, new_rep)
+	_previous_rep = new_rep
+	if changes.is_empty():
 		return
+
+	var scripts := script_ref.get_scripts(current_scene_root)
+	for change in changes:
+		print("Change: ", change)
+		if change.type == diffr.ChangeType.Deleted:
+			await _handle_deleted(change, scripts)
+
+## handles deleted nodes
+func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
+	var references := script_ref.find_script_ref_wo_dynamics(
+		current_scene_root,
+		scripts,
+		change.path
+	)
+
+	for reference in references:
+		print("found reference: ", reference)
+		if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object.", "Go to Reference", "Cancel"):
+			var ref_path: String = reference.path
+			var path_parts := ref_path.split(":")
+			var script_path := path_parts[0]
+			var line := int(path_parts[1])
+			EditorInterface.edit_script(load(script_path), line)
+
 func _exit_tree() -> void:
 	# Clean-up of the plugin goes here.
 	var ur = get_undo_redo()

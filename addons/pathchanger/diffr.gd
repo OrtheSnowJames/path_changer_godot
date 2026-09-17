@@ -1,19 +1,36 @@
 extends RefCounted
+
 enum ChangeType {
-	Changed,
-	Deleted
+	Moved,
+	Deleted,
 }
 
-## For now, only handles one difference
-## ex: {Moved, "/Node2D/Enemy/Weapon", "Node2D/Enemy/Inventory/Weapon"}
-func diff_scn_one(old_rep: Dictionary, new_rep: Dictionary) -> Array:
-	var keys := old_rep.keys()
-	for key in keys:
-		if new_rep.has(key):
-			if old_rep[key] != new_rep[key]:
-				return [ChangeType.Changed, key, old_rep[key], new_rep[key]]
-		else:
-			return [ChangeType.Deleted, key]
+## diffs two flat scene reps and returns every change at any depth
+func diff(old_rep: Dictionary, new_rep: Dictionary) -> Array[Dictionary]:
+	var changes: Array[Dictionary] = []
 
-	# if no difference
-	return []
+	for id in old_rep:
+		var old_info: Dictionary = old_rep[id]
+
+		if not new_rep.has(id):
+			changes.append({
+				"type": ChangeType.Deleted,
+				"id": id,
+				"name": old_info.name,
+				"path": old_info.path,
+				"has_script": old_info.has_script,
+			})
+			continue
+
+		var new_info: Dictionary = new_rep[id]
+		if old_info.path != new_info.path:
+			changes.append({
+				"type": ChangeType.Moved,
+				"id": id,
+				"name": new_info.name,
+				"old_path": old_info.path,
+				"new_path": new_info.path,
+				"has_script": new_info.has_script,
+			})
+
+	return changes

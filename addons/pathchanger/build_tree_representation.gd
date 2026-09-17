@@ -1,21 +1,23 @@
 extends RefCounted
 class_name BuildTreeRepresentation
-func recurse_build(to_recurse: Node, ids: bool = false) -> Dictionary:
+
+## flat map of every node under root keyed by instance id so nodes stay identifiable after renames or moves
+func build(root: Node) -> Dictionary:
 	var output: Dictionary = {}
-
-	for node in to_recurse.get_children():
-		output[node.name] = recurse_build(node)
-
+	_recurse(root, root, output)
 	return output
 
-func recurse_id_paths(to_recurse: Node) -> Dictionary:
-	var output: Dictionary = {
-		to_recurse.get_instance_id(): to_recurse.get_path()
-	}
+func _recurse(root: Node, node: Node, output: Dictionary) -> void:
+	for child in node.get_children():
+		output[child.get_instance_id()] = {
+			"name": child.name,
+			"path": scene_path(root, child),
+			"has_script": child.get_script() != null,
+		}
+		_recurse(root, child, output)
 
-	var children := to_recurse.get_children()
-
-	for child in to_recurse.get_children():
-		output.merge(recurse_id_paths(child))
-
-	return output
+## absolute path of a node within the scene like /Root/Enemy/Weapon
+func scene_path(root: Node, node: Node) -> String:
+	if node == root:
+		return "/" + str(root.name)
+	return "/" + str(root.name) + "/" + str(root.get_path_to(node))
