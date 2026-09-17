@@ -77,7 +77,6 @@ func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
 			return # this is intentional so that it doesn't spam pop-ups
 
 ## handles moved/renamed nodes
-## TODO: make sure the conflict check checks across all scenes
 func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
 	var references := script_ref.find_script_ref_wo_dynamics(
 		current_scene_root,
@@ -114,16 +113,115 @@ func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
 				conflict = true
 				break
 
+		# a script used by other scenes might rely on the old path meaning something else there
+		if not conflict:
+			var old_relative_path := _extract_relative_path(reference.text)
+			if old_relative_path != "":
+				conflict = _has_conflict_in_other_scenes(script, old_relative_path, new_relative_path)
+
 		if conflict:
-			await prompter.prompt("Path Changer", "%s is attached to more than one node in different places, so each one needs a different path to reach the moved node. This reference cant be updated automatically, please fix it yourself. (%s)" % [parsed.script_path, reference.path], "Go to Reference", "Cancel")
-			EditorInterface.edit_script(script, parsed.line)
+			var choice := await prompter.prompt_with_extra(
+				"Path Changer",
+				"%s is attached to nodes elsewhere in the project that need a different path to reach the moved node. This reference cant be updated automatically. (%s)" % [parsed.script_path, reference.path],
+				"Go to Reference",
+				"Cancel",
+				"Replace Anyway"
+			)
+			if choice == "extra":
+				_apply_replacement(script, parsed.line, reference.text, new_relative_path)
+			elif choice == "yes":
+				EditorInterface.edit_script(script, parsed.line)
 			continue
 
-		var new_text := _build_replacement_text(reference.text, new_relative_path)
-		if new_text == "":
+		_apply_replacement(script, parsed.line, reference.text, new_relative_path)
+
+## builds the replacement text and applies it, no-op if the text style is unrecognized
+func _apply_replacement(script: Script, line: int, old_text: String, new_relative_path: String) -> void:
+	var new_text := _build_replacement_text(old_text, new_relative_path)
+	if new_text == "":
+		return
+
+	_replace_reference_line(script, line, old_text, new_text)
+
+## checks every other scene in the project for owners of this script that would break
+## if old_relative_path got swapped for new_relative_path
+func _has_conflict_in_other_scenes(script: Script, old_relative_path: String, new_relative_path: String) -> bool:
+	var current_scene_path := current_scene_root.scene_file_path
+
+	for scene_path in _find_all_scenes():
+		if scene_path == current_scene_path:
 			continue
 
-		_replace_reference_line(script, parsed.line, reference.text, new_text)
+		var packed: PackedScene = load(scene_path)
+		if packed == null:
+			continue
+
+		var instance := packed.instantiate()
+		if instance == null:
+			continue
+
+		var scene_conflict := false
+		for owner in script_ref.get_owners(instance, script):
+			var owner_node: Node = owner
+			var old_target: Node = owner_node.get_node_or_null(old_relative_path)
+			var new_target: Node = owner_node.get_node_or_null(new_relative_path)
+			if old_target != new_target:
+				scene_conflict = true
+				break
+
+		instance.free()
+
+		if scene_conflict:
+			return true
+
+	return false
+
+## pulls the bare node path out of a $"..." or get_node("...") style reference
+func _extract_relative_path(text: String) -> String:
+	if text.begins_with("$"):
+		var rest := text.substr(1).strip_edges()
+		if rest.begins_with("\"") and rest.ends_with("\""):
+			return rest.substr(1, rest.length() - 2)
+		return rest
+
+	var start := text.find("(")
+	var end := text.rfind(")")
+	if start == -1 or end == -1:
+		return ""
+
+	var inner := text.substr(start + 1, end - start - 1).strip_edges()
+	if inner.begins_with("\"") and inner.ends_with("\""):
+		return inner.substr(1, inner.length() - 2)
+	return ""
+
+## finds every .tscn file in the project
+func _find_all_scenes() -> Array[String]:
+	var result: Array[String] = []
+	_scan_dir_for_scenes("res://", result)
+	return result
+
+func _scan_dir_for_scenes(path: String, result: Array[String]) -> void:
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return
+
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		# skip hidden dirs like .git and .godot
+		if entry.begins_with("."):
+			entry = dir.get_next()
+			continue
+
+		var full_path := path.path_join(entry)
+		if dir.current_is_dir():
+			_scan_dir_for_scenes(full_path, result)
+		elif entry.ends_with(".tscn"):
+			result.append(full_path)
+
+		entry = dir.get_next()
+
+	dir.list_dir_end()
 
 ## splits a script:line ref path into its parts, strips res:// first since it breaks the split
 func _parse_reference_path(ref_path: String) -> Dictionary:
