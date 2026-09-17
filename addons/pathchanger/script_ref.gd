@@ -51,6 +51,7 @@ func find_script_ref(root_node: Node, scripts: Array[Script], target_path: Strin
 					"text": candidate.text,
 					"dynamic": true,
 					"stripped": "",
+					"old_path": target_path,
 				})
 				continue
 
@@ -63,6 +64,7 @@ func find_script_ref(root_node: Node, scripts: Array[Script], target_path: Strin
 						"text": candidate.text,
 						"dynamic": false,
 						"stripped": stripped,
+						"old_path": target_path,
 					})
 					break
 
@@ -149,6 +151,11 @@ func _parse_arg_path(arg: String) -> Dictionary:
 	remainder = remainder.replace("+", "").strip_edges()
 
 	return {"path": path, "dynamic": remainder != ""}
+
+## returns every node under root_node that uses the given script
+func get_owners(root_node: Node, script: Script) -> Array:
+	var map := _get_nodes_by_script(root_node)
+	return map.get(script, [])
 
 ## maps script -> nodes under root_node
 func _get_nodes_by_script(root_node: Node) -> Dictionary:

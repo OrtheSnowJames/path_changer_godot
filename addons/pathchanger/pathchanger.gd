@@ -57,6 +57,8 @@ func _on_scene_modified():
 		print("Change: ", change)
 		if change.type == diffr.ChangeType.Deleted:
 			await _handle_deleted(change, scripts)
+		elif change.type == diffr.ChangeType.Moved:
+			await _handle_moved(change, scripts)
 
 ## handles deleted nodes
 func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
@@ -68,16 +70,100 @@ func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
 
 	for reference in references:
 		print("found reference: ", reference)
-		if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object.", "Go to Reference", "Cancel"):
-			var ref_path: String = reference.path
-			print("ref_path: ", ref_path)
-			# the ref_path starts with res://, malforming the path parts split
-			ref_path = ref_path.replace("res://", "")
-			var path_parts := ref_path.split(":")
-			var script_path := path_parts[0]
-			var line := int(path_parts[1])
-			print("script_path: ", script_path, " line: ", line)
-			EditorInterface.edit_script(load(script_path), line)
+		if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object. " + "(" + reference.path + ")", "Go to Reference", "Cancel"):
+			var parsed := _parse_reference_path(reference.path)
+			EditorInterface.edit_script(load(parsed.script_path), parsed.line)
+		else:
+			return # this is intentional so that it doesn't spam pop-ups
+
+## handles moved/renamed nodes
+func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
+	var references := script_ref.find_script_ref_wo_dynamics(
+		current_scene_root,
+		scripts,
+		change.old_path
+	)
+
+	var moved_node := _node_from_scene_path(change.new_path)
+	if moved_node == null:
+		return
+
+	for reference in references:
+		print("found reference: ", reference)
+
+		# get_child(index) refs are slot based not path based so skip them
+		if reference.text.find("get_child(") != -1:
+			continue
+
+		var parsed := _parse_reference_path(reference.path)
+		var script: Script = load(parsed.script_path)
+
+		if not await prompter.prompt("Path Changer", "It seems you have moved/renamed a referenced object. Update the script to use the new path? (" + reference.path + ")", "Change Path", "Cancel"):
+			return # this is intentional so that it doesn't spam pop-ups
+
+		# owners in different spots need different relative paths to the same target
+		var owners := script_ref.get_owners(current_scene_root, script)
+		var new_relative_path := ""
+		var conflict := false
+		for owner in owners:
+			var candidate_path := String(owner.get_path_to(moved_node))
+			if new_relative_path == "":
+				new_relative_path = candidate_path
+			elif candidate_path != new_relative_path:
+				conflict = true
+				break
+
+		if conflict:
+			await prompter.prompt("Path Changer", "%s is attached to more than one node in different places, so each one needs a different path to reach the moved node. This reference cant be updated automatically, please fix it yourself. (%s)" % [parsed.script_path, reference.path], "Go to Reference", "Cancel")
+			EditorInterface.edit_script(script, parsed.line)
+			continue
+
+		var new_text := _build_replacement_text(reference.text, new_relative_path)
+		if new_text == "":
+			continue
+
+		_replace_reference_line(script, parsed.script_path, parsed.line, reference.text, new_text)
+		EditorInterface.edit_script(script, parsed.line)
+
+## splits a script:line ref path into its parts, strips res:// first since it breaks the split
+func _parse_reference_path(ref_path: String) -> Dictionary:
+	var stripped := ref_path.replace("res://", "")
+	var parts := stripped.split(":")
+	return {"script_path": parts[0], "line": int(parts[1])}
+
+## finds the actual node in the current scene at an absolute scene path
+func _node_from_scene_path(scene_path: String) -> Node:
+	if current_scene_root == null:
+		return null
+
+	var prefix := "/" + str(current_scene_root.name)
+	if scene_path == prefix:
+		return current_scene_root
+	if not scene_path.begins_with(prefix + "/"):
+		return null
+
+	return current_scene_root.get_node_or_null(scene_path.substr(prefix.length() + 1))
+
+## rebuilds a reference call/shorthand with a new relative path, keeps the original call style
+func _build_replacement_text(old_text: String, new_relative_path: String) -> String:
+	if old_text.begins_with("$"):
+		return "$\"%s\"" % new_relative_path
+	if old_text.find("get_node_or_null") != -1:
+		return "get_node_or_null(\"%s\")" % new_relative_path
+	if old_text.find("get_node") != -1:
+		return "get_node(\"%s\")" % new_relative_path
+	return ""
+
+## swaps the old reference text for the new one on a given line and saves the script
+func _replace_reference_line(script: Script, script_path: String, line: int, old_text: String, new_text: String) -> void:
+	var lines := script.source_code.split("\n")
+	var line_index := line - 1
+	if line_index < 0 or line_index >= lines.size():
+		return
+
+	lines[line_index] = lines[line_index].replace(old_text, new_text)
+	script.source_code = "\n".join(lines)
+	ResourceSaver.save(script, script_path)
 
 func _exit_tree() -> void:
 	# Clean-up of the plugin goes here.
