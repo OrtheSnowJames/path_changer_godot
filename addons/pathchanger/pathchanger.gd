@@ -164,6 +164,10 @@ func _has_conflict_in_other_scenes(script: Script, old_relative_path: String, ne
 		for owner in script_ref.get_owners(instance, script):
 			var owner_node: Node = owner
 			var old_target: Node = owner_node.get_node_or_null(old_relative_path)
+			# if the old path never resolved here it wasnt actually working in this scene
+			if old_target == null:
+				continue
+
 			var new_target: Node = owner_node.get_node_or_null(new_relative_path)
 			if old_target != new_target:
 				scene_conflict = true
