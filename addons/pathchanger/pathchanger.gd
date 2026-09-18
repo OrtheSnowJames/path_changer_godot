@@ -5,6 +5,7 @@ var build_tree_rep = preload("build_tree_representation.gd").new()
 var diffr = preload("diffr.gd").new()
 var prompter = preload("prompter.gd").new()
 var script_ref = preload("script_ref.gd").new()
+var config = preload("config.gd").new()
 
 var current_scene_root: Node
 var _previous_rep: Dictionary
@@ -70,7 +71,8 @@ func _handle_deleted(change: Dictionary, scripts: Array[Script]) -> void:
 
 	for reference in references:
 		print("found reference: ", reference)
-		if await prompter.prompt("Path Changer", "It seems you have deleted a referenced object. " + "(" + reference.path + ")", "Go to Reference", "Cancel"):
+		var choice := await _ask("deleted_reference", "Path Changer", "It seems you have deleted a referenced object. " + "(" + reference.path + ")", "Go to Reference", "Cancel")
+		if choice == "yes":
 			var parsed := _parse_reference_path(reference.path)
 			EditorInterface.edit_script(load(parsed.script_path), parsed.line)
 		else:
@@ -98,9 +100,6 @@ func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
 		var parsed := _parse_reference_path(reference.path)
 		var script: Script = load(parsed.script_path)
 
-		if not await prompter.prompt("Path Changer", "It seems you have moved/renamed a referenced object. Update the script to use the new path? (" + reference.path + ")", "Change Path", "Cancel"):
-			return # this is intentional so that it doesn't spam pop-ups
-
 		# owners in different spots need different relative paths to the same target
 		var owners := script_ref.get_owners(current_scene_root, script)
 		var new_relative_path := ""
@@ -120,20 +119,51 @@ func _handle_moved(change: Dictionary, scripts: Array[Script]) -> void:
 				conflict = _has_conflict_in_other_scenes(script, old_relative_path, new_relative_path)
 
 		if conflict:
-			var choice := await prompter.prompt_with_extra(
+			var conflict_choice := await _ask(
+				"moved_conflict",
 				"Path Changer",
-				"%s is attached to nodes elsewhere in the project that need a different path to reach the moved node. This reference cant be updated automatically. (%s)" % [parsed.script_path, reference.path],
+				"There's a conflict: %s is attached to nodes elsewhere in the project that need a different path to reach the moved node, so this reference cant be updated automatically. (%s)" % [parsed.script_path, reference.path],
 				"Go to Reference",
 				"Cancel",
 				"Replace Anyway"
 			)
-			if choice == "extra":
+			if conflict_choice == "extra":
 				_apply_replacement(script, parsed.line, reference.text, new_relative_path)
-			elif choice == "yes":
+			elif conflict_choice == "yes":
 				EditorInterface.edit_script(script, parsed.line)
 			continue
 
-		_apply_replacement(script, parsed.line, reference.text, new_relative_path)
+		var choice := await _ask(
+			"moved_change_path",
+			"Path Changer",
+			"It seems you have moved/renamed a referenced object. Update the script to use the new path? (" + reference.path + ")",
+			"Change Path",
+			"Cancel",
+			"Skip"
+		)
+		if choice == "yes":
+			_apply_replacement(script, parsed.line, reference.text, new_relative_path)
+		elif choice == "extra":
+			continue # skips just this reference
+		else:
+			return # this is intentional so that it doesn't spam pop-ups
+
+## asks the user, or reuses a remembered answer for this kind of prompt if one was saved
+func _ask(key: String, title: String, description: String, yes_text: String, no_text: String, extra_text: String = "") -> String:
+	var remembered := config.get_remembered(key)
+	if remembered != "":
+		return remembered
+
+	var result: Dictionary
+	if extra_text == "":
+		result = await prompter.prompt(title, description, yes_text, no_text)
+	else:
+		result = await prompter.prompt_with_extra(title, description, yes_text, no_text, extra_text)
+
+	if result.remember:
+		config.remember(key, result.choice)
+
+	return result.choice
 
 ## builds the replacement text and applies it, no-op if the text style is unrecognized
 func _apply_replacement(script: Script, line: int, old_text: String, new_relative_path: String) -> void:
