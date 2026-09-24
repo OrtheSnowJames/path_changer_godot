@@ -2,23 +2,45 @@ extends RefCounted
 
 const _Config = preload("config.gd")
 
+# didn't work right
+func wrap_description(text: String) -> String:
+	# after every 80 chars, insert a newline
+
+	var result := ""
+	var current_line := ""
+
+	for word in text.split(" "):
+		if current_line.length() + word.length() + 1 > 80:
+			result += "\n" + current_line
+			current_line = word
+		else:
+			if current_line != "":
+				current_line += " "
+			current_line += word
+
+	return result
+
+
 ## builds an unpopped confirmation dialog with a remember checkbox, added to the editor base control
 func _new_dialog(title: String, description: String, yes_text: String, no_text: String) -> Dictionary:
+	var vbox := VBoxContainer.new()
 	var dialog := ConfirmationDialog.new()
 	dialog.title = title
 	dialog.dialog_text = description
 	dialog.ok_button_text = yes_text
 	dialog.cancel_button_text = no_text
 
-	# the label doesnt wrap on its own so force it to a fixed width or itll stretch into one long line
-	var label := dialog.get_label()
+	var label := Label.new()
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(400, 0)
 
 	var checkbox := CheckBox.new()
 	checkbox.text = "Don't show this again"
 	checkbox.tooltip_text = "saved to " + ProjectSettings.globalize_path(_Config.CONFIG_PATH)
-	dialog.add_child(checkbox)
+
+	vbox.add_child(label)
+	vbox.add_child(checkbox)
+	dialog.add_child(vbox)
 
 	# add to the editor base control since this helper isnt in the tree itself
 	EditorInterface.get_base_control().add_child(dialog)
